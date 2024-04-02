@@ -30,18 +30,24 @@ class ParseState (Enum):
     Class = 1
     Member = 2
 
+class Brackets:
+    def __init__(self):
+        self.begin = 0
+        self.end = 0
+
 class ParsedFile:
     def __init__(self, filePath):
         self.filePath = filePath
         self.classesStack = []
         self.stateStack = []
+        self.bracketCount = []
         self.currentState = ParseState.Idle
         self.bracketCounter = 0
         self.currentIndex = -1
 
     def countBracket(self, line):
-        self.bracketCounter += len(re.findall("\{", line))
-        self.bracketCounter -= len(re.findall("\}", line))
+        self.bracketCount[self.currentIndex].begin += len(re.findall("\{", line))
+        self.bracketCount[self.currentIndex].end += len(re.findall("\}", line))
 
     def getArg(self, line):
         arguments = re.findall("\(.+\)$", line)
@@ -84,9 +90,13 @@ class ParsedFile:
                 if len(arg) > 0:
                     self.classesStack.append(ParsedClass(self.getArg(line)))
                     self.currentIndex = len(self.classesStack) - 1
-                # todo
-            elif line.startswith(MACRO_REFLECT_MEMBER):
+                    self.bracketCount.append(Brackets())
+            elif line.startswith(MACRO_REFLECT_MEMBER) and self.currentIndex >= 0:
                 self.findMember(file)
+            if self.currentIndex >= 0:
+                countBracket(line)
+                if self.bracketCount[self.currentIndex].begin == self.bracketCount[self.currentIndex].end and self.bracketCount[self.currentIndex].begin > 0:
+                    self.currentIndex = -1
             line = file.readline(count)
 
 
