@@ -1,112 +1,87 @@
-import sys
 import re
-from pathlib import Path
-import os.path
-from enum import Enum
+import parsed_objects as PO
+import os
 
-class ParsedClassMember:
-    type = ""
-    name = ""
-    def debug(self):
-        print("Member {}-{}".format(self.type, self.name))
+class HeaderParser:
+    MACRO_REFLECT_CLASS = "REFLECT_CLASS"
+    MACRO_REFLECT_MEMBER = "REFLECT_MEMBER"
 
-class ParsedClass:
-    def __init__(self, new_classname):
-        self.classname = new_classname
-        self.members = []
+    def isReflectClass(self, line):
+        return line.startswith(self.MACRO_REFLECT_CLASS)
+
+    def isReflectMember(self, line):
+        return line.startswith(self.MACRO_REFLECT_MEMBER)
+
+    def extractArg(self, line):
+        return re.search(".*\((.*)\).*", line).group(1)
+
+    def ignoreComment(self, file, curLine):
+        regex = re.search("\*/(.*)", curLine)
+        while regex is None and not file.atEnd():
+            line = file.nextTrimmedLine()
+            regex = re.search("\*/(.*)", line)
+        if regex is None:
+            return ""
+        return regex.group(1)
+
+    def removeComment(self, file, line):
+        if "//" in line:
+            lineRet = re.search("(.*)//", line).group(1)
+        elif "/*" in line:
+            lineRet = self.ignoreComment(file, line)
+        else:
+            lineRet = line
+        return lineRet
 
 
-#constants definition
-KEYWORD_CLASS = "class"
-KEYWORD_TEMPLATE = "template"
-MACRO_REFLECT_CLASS = "REFLECT_CLASS"
-MACRO_REFLECT_MEMBER = "REFLECT_MEMBER"
-REGEX_ARG = "\(.+\)$"
-REGEX_TEMPLATE = "template<.+>"
-REGEX_TEMPLATEARG = "<.+>"
+    def getMember(self, file):
+        found = False
+        while not file.atEnd() and not found:
+            line = self.removeComment(file, file.nextTrimmedLine())
+            member = re.search("(.*) (.*);.*", line)
+            if member is not None:
+                self.classList[self.classIndex].members.append(PO.ClassMember(member.group(1), member.group(2)))
+                found = True
 
-class ParseState (Enum):
-    Idle = 0
-    Class = 1
-    Member = 2
 
-class Brackets:
-    def __init__(self):
-        self.begin = 0
-        self.end = 0
+    def parseClass(self, file, classname):
+        self.classList.append(PO.Class(classname))
+        self.classIndex += 1
+        classBracket = PO.BracketCounter()
+        while not file.atEnd() and not classBracket.isFinished():
+            line = self.removeComment(file, file.nextTrimmedLine())
+            classBracket.count(line)
+            if line.startswith(self.MACRO_REFLECT_MEMBER):
+                self.getMember(file)
+        self.classIndex -= 1
 
-class ParsedFile:
+    def processLine(self, file, curLine):
+        if self.isReflectClass(curLine):
+            classname = self.extractArg(curLine)
+            self.parseClass(file, classname)
+
     def __init__(self, filePath):
         self.filePath = filePath
-        self.classesStack = []
-        self.stateStack = []
-        self.bracketCount = []
-        self.currentState = ParseState.Idle
-        self.bracketCounter = 0
-        self.currentIndex = -1
-
-    def countBracket(self, line):
-        self.bracketCount[self.currentIndex].begin += len(re.findall("\{", line))
-        self.bracketCount[self.currentIndex].end += len(re.findall("\}", line))
-
-    def getArg(self, line):
-        arguments = re.findall("\(.+\)$", line)
-        if arguments.count == 1:
-            arg = arguments[0]
-            arg = arg[1 : len(arg) - 1]
-            return arg
-        else:
-            print("Wrong argument count")
-            return ""
-
-    def fillMember(self, wordlist, member):
-        if len(wordlist) >= 2:
-            member.type = wordlist[0]
-            member.name = wordlist[1][:len(wordlist[1]) - 1]
-            return member
-
-    def findMember(self, file):
-        count = 0
-        line = file.readline(count)
-        member = ParsedClassMember()
-        while len(member.type) == 0 and count > 0:
-            line = line.strip()
-            if line.startswith("/*"):
-                while not line.endswith("*/") or count > 0:
-                    line = file.readline(count)
-            elif not line.startswith("//"):
-                self.fillMember(line.split, member)
-                self.classesStack[self.currentIndex].members.append(member)
-
+        self.classList = []
+        self.classIndex = -1
 
     def parse(self):
-        file = open(self.filePath)
-        count = 0
-        line = file.readline(count)
-        while count > 0:
-            line = line.strip()
-            if line.startswith(MACRO_REFLECT_CLASS):
-                arg = self.getArg(line)
-                if len(arg) > 0:
-                    self.classesStack.append(ParsedClass(self.getArg(line)))
-                    self.currentIndex = len(self.classesStack) - 1
-                    self.bracketCount.append(Brackets())
-            elif line.startswith(MACRO_REFLECT_MEMBER) and self.currentIndex >= 0:
-                self.findMember(file)
-            if self.currentIndex >= 0:
-                countBracket(line)
-                if self.bracketCount[self.currentIndex].begin == self.bracketCount[self.currentIndex].end and self.bracketCount[self.currentIndex].begin > 0:
-                    self.currentIndex = -1
-            line = file.readline(count)
+        file = PO.ParsedFile(self.filePath)
+        while not file.atEnd():
+            line = file.nextTrimmedLine()
+            self.processLine(file, line)
 
+    def print(self):
+        print(self.filePath)
+        print(os.path.basename(self.filePath))
+        for classe in self.classList:
+            classe.print()
 
-
-def parseFile(filename):
-    parsed = ParsedFile(filename)
-    #generate header
-    directory = os.path.dirname(filename)
-
-def parseHeaders(directory):
-    for filepath in Path(directory).rglob('*.h'):
-        print(">Parse headers: {}".format(filepath))
-        parseFile(filepath)
+    def implementLoader(self):
+        if len(self.classList) > 0:
+            name = os.path.basename(self.filePath)
+            name = name[0:len(name) - 1] + "generated.h"
+            generatedFile = self.filePath.parent.absolute().__str__() + "\\" + name
+            file = open(generatedFile, 'w')
+            for classParsed in self.classList:
+                classParsed.implement(file)
