@@ -26,9 +26,15 @@ class Class:
         for member in self.members:
             member.print()
     def implement(self, file):
+        # implements loader
         file.write("#define _INIT_{}\n".format(self.classname))
         for member in self.members:
             file.write("a_value.getMember<{}>(\"{}\", a_toInit.{});\\\n".format(member.type, member.name, member.name))
+        file.write("\n\n")
+        # implements writer
+        file.write("#define _SAVE_{}\n".format(self.classname))
+        for member in self.members:
+            file.write("a_value.saveMember<{}>(\"{}\", a_toInit.{});\\\n".format(member.type, member.name, member.name))
 
 class BracketCounter:
     start = 0
